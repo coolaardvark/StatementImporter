@@ -3,7 +3,8 @@ using System.Runtime.InteropServices;
 using StatementImporter;
 using Microsoft.Office.Interop.Excel;
 
-// Needs to outside the try so we can use it in the finally block
+// Every excel object needs to outside the try so we can use them in
+// the finally block
 Application excelApp = null;
 Workbooks excelWorkbooks = null;
 Workbook excelWorkbook = null;
@@ -13,11 +14,10 @@ ListRows transRows = null;
 Excel.Range dataRange = null;
 List<ListRow> rowsToDispose = null;
 
-var excelFile = @"C:\Users\mark\Downloads\import-test.xlsx";
-var csvFile = @"C:\Users\mark\Downloads\25012025_7645.csv";
+(string excelFile, string csvFile) = processArgs(args);
 
 var rawStatment = File.ReadAllText(csvFile);
-
+// Convert in to a format we can use in the spreadsheet
 var statementLines = StatementFormater.FromatStatment(rawStatment);
 
 try
@@ -143,4 +143,48 @@ finally
         Marshal.FinalReleaseComObject(excelApp);
         excelApp = null;
     }
+}
+
+static (string, string) processArgs(string[] args)
+{
+    if (args.Length != 2)
+    {
+        Console.WriteLine("Please pass the paths to the files you want me " +
+            "to work on");
+        Console.WriteLine("One needs to an excel file, the other a csv file, " +
+            "the order isn't important");
+
+        Environment.Exit(1);
+    }
+
+    var excelFile = string.Empty;
+    var csvFile = string.Empty;
+
+    foreach (var arg in args)
+    {
+        if (File.Exists(arg))
+        {
+            if (arg.EndsWith(".xlsx"))
+            {
+                excelFile = arg;
+            }
+            else if (arg.EndsWith(".csv"))
+            {
+                csvFile = arg;
+            }
+            else
+            {
+                Console.WriteLine("I need an excel file (.xlsx) and a csv file");
+                Environment.Exit(1);
+            }
+        }
+        else
+        {
+            Console.WriteLine($"File {arg} not found");
+
+            Environment.Exit(1);
+        }
+    }
+
+    return (excelFile, csvFile);
 }
