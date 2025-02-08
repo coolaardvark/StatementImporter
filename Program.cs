@@ -1,18 +1,12 @@
-﻿using Excel = Microsoft.Office.Interop.Excel;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using StatementImporter;
 using Microsoft.Office.Interop.Excel;
+using System.Diagnostics;
 
 // Every excel object needs to outside the try so we can use them in
 // the finally block
 Application excelApp = null;
-Workbooks excelWorkbooks = null;
 Workbook excelWorkbook = null;
-Worksheet transWorksheet = null;
-ListObject transTable = null;
-ListRows transRows = null;
-Excel.Range dataRange = null;
-List<ListRow> rowsToDispose = null;
 
 (string excelFile, string csvFile) = processArgs(args);
 
@@ -25,44 +19,41 @@ try
     excelApp = new Application();
     excelApp.Visible = false;
 
-    // In order for the Marshal.ReleaseComObject to work, we to avoid using
-    // double dots in any excel object. This creates another com object as
-    // a container and since we don't have a reference to it we can't release
-    // it, so we have to assign a variable for every excel object, even if we
-    // are just using it to get to another excel object.
-    excelWorkbooks = excelApp.Workbooks;
-    excelWorkbook = excelWorkbooks.Open(
+    // I could use the 'recomeneded' way to deal with closing Excel
+    // and track every single Excel object I create then dispose and
+    // free each one at the end, the trouble is that this *only* works
+    // if you are an admin and I want this to work for everyone, so I
+    // have to use the brute force approch and force the Excel instance
+    // to quit at the end. Feels like a hack, but it is the only way that
+    // will work for both admins and normal users.
+    excelWorkbook = excelApp.Workbooks.Open(
         excelFile, false, false, Type.Missing, Type.Missing, Type.Missing,
         Type.Missing, Type.Missing, Type.Missing, false, Type.Missing, Type.Missing,
         Type.Missing, Type.Missing, Type.Missing);
 
     // Find sheet...
-    transWorksheet = excelWorkbook.Worksheets["Transactions"];
+    var transWorksheet = excelWorkbook.Worksheets["Transactions"];
     if (transWorksheet == null)
     {
         throw new Exception("Transactions sheet not found");
     }
     // ...and table
-    transTable = transWorksheet.ListObjects["TransactionsTable"];
+    var transTable = transWorksheet.ListObjects["TransactionsTable"];
     if (transTable == null)
     {
         throw new Exception("TransactionTable not found");
     }
 
-    // Remember, every single excel object needs to get it's own variable
-    // EVERY SINGLE ONE!
-    transRows = transTable.ListRows;
-    rowsToDispose = new List<ListRow>();
     foreach(var line in statementLines)
     {
         // We want to add out lines at the top, not the bottom of the list
         // (table) object
         // Mmmm how do I handle this object, it gets created afresh each
         // iteration, but I need to dispose of it to
-        var newRow = transRows.Add(1);
+        var newRow = transTable.ListRows.Add(1);
 
         // Gives us an empty row
-        dataRange = newRow.Range;
+        var dataRange = newRow.Range;
         dataRange.Cells[1].Value = line.Account;
         dataRange.Cells[2].Value = line.Date.ToOADate();
         dataRange.Cells[3].Value = line.Descritpion;
@@ -74,9 +65,6 @@ try
         {
             dataRange.Cells[5].Value = line.Credit;
         }
-
-        // Mark all our range objects for disposal
-        rowsToDispose.Add(newRow);
     }
 
     excelWorkbook.Save();
@@ -93,55 +81,25 @@ catch (Exception ex)
 }
 finally
 {
-    // We have to tell the OS to release *every* COM object we use!
-    if (rowsToDispose != null)
-    {
-        foreach(var row in rowsToDispose)
-        {
-            Marshal.ReleaseComObject(row);
-        }
-
-        rowsToDispose.Clear();
-    }
-    if (dataRange != null)
-    {
-        Marshal.ReleaseComObject(dataRange);
-        dataRange = null;
-    }
-    if (transTable != null)
-    {
-        Marshal.ReleaseComObject(transTable);
-        transTable = null;
-    }
-    if (transRows != null)
-    {
-        Marshal.ReleaseComObject(transRows);
-        transRows = null;
-    }
-    if (excelWorkbooks != null)
-    {
-        Marshal.ReleaseComObject(excelWorkbooks);
-        excelWorkbooks = null;
-    }
-    if (transWorksheet != null)
-    {
-        Marshal.ReleaseComObject(transWorksheet);
-        transWorksheet = null;
-    }
     if (excelWorkbook != null)
     {
         // Wait till now to close the workbook since I've had problems
         // getting the books open or closed status, here we don't
         // care, just close it
         excelWorkbook.Close(false, Type.Missing, Type.Missing);
-        Marshal.ReleaseComObject(excelWorkbook);
-        excelWorkbook = null;
     }
     if (excelApp != null)
     {
-        excelApp.Quit();
-        Marshal.FinalReleaseComObject(excelApp);
-        excelApp = null;
+        // The only way for a non-admin user to close the excel
+        // app opened via interop is to do a forced kill!
+        // Feels very much like a hack, but there you go!
+        var excelProcessID = 0;
+
+        GetWindowThreadProcessId(
+            new IntPtr(excelApp.Hwnd), ref excelProcessID);
+        var excelProcess = Process.GetProcessById(excelProcessID);
+
+        excelProcess.Kill();
     }
 }
 
@@ -188,3 +146,6 @@ static (string, string) processArgs(string[] args)
 
     return (excelFile, csvFile);
 }
+
+[DllImport("user32.dll", SetLastError = true)]
+static extern int GetWindowThreadProcessId(IntPtr hwnd, ref int lpdwProcessId);
